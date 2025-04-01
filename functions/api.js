@@ -2,114 +2,71 @@ const serverless = require('serverless-http');
 const express = require('express');
 const bodyParser = require('body-parser');
 const { Client } = require('@notionhq/client');
-const dotenv = require('dotenv');
 
-// 환경 변수 로드
-dotenv.config();
+// 환경 변수 로깅 (dotenv 제거)
+console.log('프로세스 환경 변수:', JSON.stringify(process.env, null, 2));
 
-// Notion 클라이언트 초기화
-const notion = new Client({
-  auth: process.env.NOTION_TOKEN
-});
+// 안전한 Notion 클라이언트 초기화
+let notion;
+try {
+  // 환경 변수 직접 접근
+  const notionToken = process.env.NOTION_TOKEN;
+  const notionDatabaseId = process.env.NOTION_DATABASE_ID;
+
+  console.log('Notion 토큰 존재 여부:', !!notionToken);
+  console.log('Notion 데이터베이스 ID 존재 여부:', !!notionDatabaseId);
+
+  if (!notionToken || !notionDatabaseId) {
+    throw new Error('Notion 토큰 또는 데이터베이스 ID가 누락되었습니다');
+  }
+
+  notion = new Client({
+    auth: notionToken
+  });
+  console.log('Notion 클라이언트 초기화 성공');
+} catch (error) {
+  console.error('Notion 클라이언트 초기화 실패:', error);
+}
 
 // 노션 DB에 게시물 추가 함수
 async function addThreadToNotion(threadInfo) {
+  console.log('addThreadToNotion 함수 호출됨');
+  
   try {
-    // 기존 함수 내용 그대로 유지
-    const existingPages = await notion.databases.query({
-      database_id: process.env.NOTION_DATABASE_ID,
-      filter: {
-        property: "URL",
-        url: {
-          equals: threadInfo.url
-        }
-      }
-    });
-    
-    // 이미 존재하면 건너뛰기
-    if (existingPages.results.length > 0) {
-      console.log(`URL ${threadInfo.url}는 이미 존재합니다`);
-      return {
-        success: true,
-        message: '이미 저장된 게시물입니다',
-        existing: true,
-        id: existingPages.results[0].id
-      };
+    if (!notion) {
+      throw new Error('Notion 클라이언트가 초기화되지 않았습니다');
     }
-    
-    // 현재 날짜 및 시간 포맷팅
-    const now = new Date();
-    const formattedDate = now.toISOString();
-    
-    // 사용자 이름 정보 추출 (URL에서)
-    const usernameMatch = threadInfo.url.match(/@([^\/]+)/);
-    const username = usernameMatch ? usernameMatch[1] : '알 수 없음';
-    
-    // 제목 생성 (사용자 이름 + 날짜 조합)
-    const title = `${username}의 쓰레드 (${now.getFullYear()}-${(now.getMonth()+1).toString().padStart(2, '0')}-${now.getDate().toString().padStart(2, '0')})`;
-    
-    // 노션에 새 페이지 생성
+
+    const databaseId = process.env.NOTION_DATABASE_ID;
+    console.log('사용할 데이터베이스 ID:', databaseId);
+
+    // 더미 테스트용 데이터 추가
     const response = await notion.pages.create({
       parent: {
-        database_id: process.env.NOTION_DATABASE_ID,
+        database_id: databaseId,
       },
       properties: {
         "제목": {
           title: [
             {
               text: {
-                content: title
+                content: "테스트 페이지 " + new Date().toISOString()
               }
             }
           ]
-        },
-        "URL": {
-          url: threadInfo.url
-        },
-        "생성 일시": {
-          date: {
-            start: formattedDate
-          }
-        },
-        "구분": {
-          select: {
-            name: "쓰레드"
-          }
-        },
-        "원본 글 작성자": {
-          rich_text: [
-            {
-              text: {
-                content: username
-              }
-            }
-          ]
-        },
-        "최초 작성된 곳": {
-          rich_text: [
-            {
-              text: {
-                content: "쓰레드(Threads)"
-              }
-            }
-          ]
-        },
-        "중요도": {
-          select: {
-            name: "보통"
-          }
         }
       }
     });
     
-    console.log(`게시물이 성공적으로 추가되었습니다: ${threadInfo.url}`);
+    console.log('테스트 페이지 생성 성공:', response.id);
     return {
       success: true,
-      message: '게시물이 노션에 저장되었습니다',
+      message: '테스트 페이지가 생성되었습니다',
       id: response.id
     };
   } catch (error) {
-    console.error(`게시물 추가 중 오류 발생: ${error.message}`);
+    console.error(`페이지 생성 중 오류 발생: ${error.message}`);
+    console.error('전체 에러:', error);
     throw error;
   }
 }
@@ -128,15 +85,16 @@ app.get('/', (req, res) => {
     env: {
       NOTION_TOKEN: process.env.NOTION_TOKEN ? '설정됨' : '미설정',
       NOTION_DATABASE_ID: process.env.NOTION_DATABASE_ID ? '설정됨' : '미설정'
-    }
+    },
+    nodeEnv: process.env.NODE_ENV,
+    netlifyContext: process.env.CONTEXT
   });
 });
 
-// POST 엔드포인트 추가
+// POST 엔드포인트 추가 (테스트용)
 app.post('/thread-to-notion', async (req, res) => {
   try {
-    const threadInfo = req.body;
-    const result = await addThreadToNotion(threadInfo);
+    const result = await addThreadToNotion(req.body || {});
     res.status(200).json(result);
   } catch (error) {
     console.error('API 처리 중 오류:', error);
