@@ -1,8 +1,6 @@
 const serverless = require('serverless-http');
 const express = require('express');
 const { Client } = require('@notionhq/client');
-const chromium = require('@sparticuz/chromium');
-const puppeteer = require('puppeteer-core');
 const bodyParser = require('body-parser');
 
 // 서버 초기화
@@ -15,124 +13,53 @@ const notion = new Client({
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// 브라우저 초기화 함수
-async function getBrowser() {
-  return puppeteer.launch({
-    args: chromium.args,
-    defaultViewport: chromium.defaultViewport,
-    executablePath: await chromium.executablePath(),
-    headless: true,
-  });
+// URL에서 Thread ID 추출
+function extractThreadInfo(url) {
+  try {
+    // URL 형식 확인
+    if (!url || !url.includes('threads.net')) {
+      throw new Error('유효한 쓰레드 URL이 아닙니다');
+    }
+    
+    // 기본 정보 추출
+    let threadId = '';
+    let username = '';
+    
+    if (url.includes('/post/')) {
+      threadId = url.split('/post/')[1]?.split('/')[0] || '';
+      username = url.split('/@')[1]?.split('/')[0] || '';
+    } else if (url.includes('/t/')) {
+      threadId = url.split('/t/')[1]?.split('/')[0] || '';
+    }
+    
+    return {
+      id: threadId,
+      url: url,
+      username: username
+    };
+  } catch (error) {
+    console.error('URL 파싱 오류:', error);
+    throw error;
+  }
 }
 
-// 쓰레드 게시물 정보 가져오기
-async function getThreadPostInfo(url) {
-  // URL 유효성 검사
-  if (!url || !url.includes('threads.net')) {
-    throw new Error('유효한 쓰레드 URL이 아닙니다');
-  }
-  
-  console.log(`게시물 정보 가져오는 중: ${url}`);
-  
-  const browser = await getBrowser();
-  const page = await browser.newPage();
-  await page.setUserAgent('Mozilla/5.0 (iPhone; CPU iPhone OS 14_7_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.2 Mobile/15E148 Safari/604.1');
-  
-  try {
-    // 페이지 로드
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
-    
-    // 게시물 데이터 추출
-    const postData = await page.evaluate(() => {
-      // 게시물 ID 추출
-      const postId = window.location.pathname.split('/post/')[1]?.split('/')[0] || 
-                    window.location.pathname.split('/t/')[1]?.split('/')[0] || '';
-      
-      // 작성자 정보
-      const authorElement = document.querySelector('a[href*="/@"]');
-      const authorUsername = authorElement ? 
-        authorElement.href.split('/@')[1]?.split('/')[0] || '' : '';
-      const authorName = authorElement ? 
-        authorElement.textContent.trim() || authorUsername : authorUsername;
-      
-      // 게시물 내용
-      const contentElement = document.querySelector('article div[role="button"] > div > span') || 
-                            document.querySelector('article p');
-      const content = contentElement ? contentElement.textContent.trim() : '';
-      
-      // 이미지 URL 추출
-      const imageElements = Array.from(document.querySelectorAll('article img[style*="object-fit"]'));
-      const imageUrls = imageElements
-        .map(img => img.src)
-        .filter(src => src && !src.includes('profile-pic'));
-      
-      // 게시 날짜
-      const timeElement = document.querySelector('time');
-      const timestamp = timeElement ? timeElement.dateTime : '';
-      const displayDate = timeElement ? timeElement.textContent.trim() : '';
-      
-      // 좋아요 및 댓글 수
-      const statElements = Array.from(document.querySelectorAll('article div[role="button"] > div'));
-      let likes = '0';
-      let comments = '0';
-      
-      if (statElements.length >= 2) {
-        likes = statElements[0]?.textContent?.trim() || '0';
-        comments = statElements[1]?.textContent?.trim() || '0';
-      }
-      
-      return {
-        id: postId,
-        author: {
-          username: authorUsername,
-          name: authorName
-        },
-        content,
-        url: window.location.href,
-        imageUrls,
-        timestamp,
-        displayDate,
-        likes,
-        comments
-      };
-    });
-    
-    console.log('게시물 데이터 추출 완료:', postData.id);
-    return postData;
-  } catch (error) {
-    console.error('게시물 정보 가져오기 실패:', error);
-    throw error;
-  } finally {
-    await browser.close();
-  }
-}
 // 노션 DB에 게시물 추가
-async function addPostToNotion(post) {
+async function addThreadToNotion(threadInfo) {
   try {
-    // 이미 존재하는지 확인 (Post ID로)
+    // 이미 존재하는지 확인
     const existingPages = await notion.databases.query({
       database_id: process.env.NOTION_DATABASE_ID,
       filter: {
-        or: [
-          {
-            property: "Post ID",
-            rich_text: {
-              equals: post.id
-            }
-          },
-          {
-            property: "URL",
-            url: {
-              equals: post.url
-            }
-          }
-        ]
+        property: "URL",
+        url: {
+          equals: threadInfo.url
+        }
       }
     });
     
     // 이미 존재하면 건너뛰기
     if (existingPages.results.length > 0) {
-      console.log(`게시물 ID ${post.id}는 이미 존재합니다. 건너뜁니다.`);
+      console.log(`URL ${threadInfo.url}는 이미 존재합니다`);
       return {
         success: true,
         message: '이미 저장된 게시물입니다',
@@ -140,18 +67,6 @@ async function addPostToNotion(post) {
         id: existingPages.results[0].id
       };
     }
-    
-    // 이미지 블록 준비
-    const imageBlocks = post.imageUrls.map(url => ({
-      object: "block",
-      type: "image",
-      image: {
-        type: "external",
-        external: {
-          url
-        }
-      }
-    }));
     
     // 노션에 새 페이지 생성
     const response = await notion.pages.create({
@@ -163,26 +78,19 @@ async function addPostToNotion(post) {
           title: [
             {
               text: {
-                content: post.content.substring(0, 100) + (post.content.length > 100 ? '...' : '')
+                content: `Thread ${threadInfo.id}`
               }
             }
           ]
         },
-        "내용": {
-          rich_text: [
-            {
-              text: {
-                content: post.content.length > 2000 ? 
-                  post.content.substring(0, 2000) + '...' : post.content
-              }
-            }
-          ]
+        "URL": {
+          url: threadInfo.url
         },
-        "작성자": {
+        "Post ID": {
           rich_text: [
             {
               text: {
-                content: post.author.name || post.author.username
+                content: threadInfo.id
               }
             }
           ]
@@ -191,44 +99,20 @@ async function addPostToNotion(post) {
           rich_text: [
             {
               text: {
-                content: post.author.username
+                content: threadInfo.username || "알 수 없음"
               }
             }
           ]
-        },
-        "Post ID": {
-          rich_text: [
-            {
-              text: {
-                content: post.id
-              }
-            }
-          ]
-        },
-        "URL": {
-          url: post.url
-        },
-        "작성일": {
-          date: {
-            start: post.timestamp || new Date().toISOString()
-          }
         },
         "저장일": {
           date: {
             start: new Date().toISOString()
           }
-        },
-        "좋아요 수": {
-          number: parseInt(post.likes.replace(/[^\d]/g, '')) || 0
-        },
-        "댓글 수": {
-          number: parseInt(post.comments.replace(/[^\d]/g, '')) || 0
         }
-      },
-      children: imageBlocks
+      }
     });
     
-    console.log(`게시물이 성공적으로 추가되었습니다: ${post.id}`);
+    console.log(`게시물이 성공적으로 추가되었습니다: ${threadInfo.url}`);
     return {
       success: true,
       message: '게시물이 노션에 저장되었습니다',
@@ -239,6 +123,7 @@ async function addPostToNotion(post) {
     throw error;
   }
 }
+
 // API 엔드포인트: 웹훅으로 게시물 URL 받기
 app.post('/add-thread', async (req, res) => {
   const { url } = req.body;
@@ -251,11 +136,11 @@ app.post('/add-thread', async (req, res) => {
   }
   
   try {
-    // 쓰레드 게시물 정보 가져오기
-    const postInfo = await getThreadPostInfo(url);
+    // 쓰레드 정보 추출
+    const threadInfo = extractThreadInfo(url);
     
     // 노션에 저장
-    const result = await addPostToNotion(postInfo);
+    const result = await addThreadToNotion(threadInfo);
     
     return res.json(result);
   } catch (error) {
