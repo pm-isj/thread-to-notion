@@ -1,8 +1,12 @@
 [build]
   command = "npm install"
   functions = "functions"
+  publish = "."  # 프로젝트 루트 디렉토리 명시
 
 [[redirects]]
   from = "/*"
   to = "/.netlify/functions/api"
   status = 200
+
+[context.production.environment]
+  NODE_VERSION = "18"  # Node.js 버전 명시
