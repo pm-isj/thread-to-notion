@@ -106,7 +106,6 @@ async function getThreadPostInfo(url) {
     await browser.close();
   }
 }
-
 // 노션 DB에 게시물 추가
 async function addPostToNotion(post) {
   try {
@@ -240,7 +239,6 @@ async function addPostToNotion(post) {
     throw error;
   }
 }
-
 // API 엔드포인트: 웹훅으로 게시물 URL 받기
 app.post('/add-thread', async (req, res) => {
   const { url } = req.body;
@@ -374,4 +372,40 @@ app.get('/', (req, res) => {
           
           try {
             resultDiv.classList.add('hidden');
-            loading
+            loadingDiv.classList.remove('hidden');
+            
+            const response = await fetch('/add-thread', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ url }),
+            });
+            
+            const data = await response.json();
+            
+            loadingDiv.classList.add('hidden');
+            resultDiv.classList.remove('hidden');
+            
+            if (data.success) {
+              resultDiv.className = 'result success';
+              resultDiv.textContent = data.message;
+            } else {
+              resultDiv.className = 'result error';
+              resultDiv.textContent = data.message || '오류가 발생했습니다';
+            }
+          } catch (error) {
+            loadingDiv.classList.add('hidden');
+            resultDiv.classList.remove('hidden');
+            resultDiv.className = 'result error';
+            resultDiv.textContent = '서버 오류가 발생했습니다: ' + error.message;
+          }
+        });
+      </script>
+    </body>
+    </html>
+  `);
+});
+
+// 서버리스 함수로 내보내기
+module.exports.handler = serverless(app);
