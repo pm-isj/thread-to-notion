@@ -1,4 +1,18 @@
-// 노션 DB에 게시물 추가
+const serverless = require('serverless-http');
+const express = require('express');
+const bodyParser = require('body-parser');
+const { Client } = require('@notionhq/client');
+const dotenv = require('dotenv');
+
+// 환경 변수 로드
+dotenv.config();
+
+// Notion 클라이언트 초기화
+const notion = new Client({
+  auth: process.env.NOTION_TOKEN
+});
+
+// 노션 DB에 게시물 추가 함수 (기존 함수 그대로 유지)
 async function addThreadToNotion(threadInfo) {
   try {
     // 이미 존재하는지 확인
@@ -99,3 +113,28 @@ async function addThreadToNotion(threadInfo) {
     throw error;
   }
 }
+
+// Express 앱 생성
+const app = express();
+
+// 미들웨어 설정
+app.use(bodyParser.json());
+
+// POST 엔드포인트 추가
+app.post('/thread-to-notion', async (req, res) => {
+  try {
+    const threadInfo = req.body;
+    const result = await addThreadToNotion(threadInfo);
+    res.status(200).json(result);
+  } catch (error) {
+    console.error('API 처리 중 오류:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: '서버 오류가 발생했습니다', 
+      error: error.message 
+    });
+  }
+});
+
+// Netlify 서버리스 함수로 내보내기
+module.exports.handler = serverless(app);
