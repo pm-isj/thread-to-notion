@@ -12,10 +12,10 @@ const notion = new Client({
   auth: process.env.NOTION_TOKEN
 });
 
-// 노션 DB에 게시물 추가 함수 (기존 함수 그대로 유지)
+// 노션 DB에 게시물 추가 함수
 async function addThreadToNotion(threadInfo) {
   try {
-    // 이미 존재하는지 확인
+    // 기존 함수 내용 그대로 유지
     const existingPages = await notion.databases.query({
       database_id: process.env.NOTION_DATABASE_ID,
       filter: {
@@ -119,6 +119,18 @@ const app = express();
 
 // 미들웨어 설정
 app.use(bodyParser.json());
+
+// GET 디버깅 엔드포인트 추가
+app.get('/', (req, res) => {
+  res.status(200).json({
+    message: 'Netlify 함수가 성공적으로 실행되었습니다!',
+    status: 'OK',
+    env: {
+      NOTION_TOKEN: process.env.NOTION_TOKEN ? '설정됨' : '미설정',
+      NOTION_DATABASE_ID: process.env.NOTION_DATABASE_ID ? '설정됨' : '미설정'
+    }
+  });
+});
 
 // POST 엔드포인트 추가
 app.post('/thread-to-notion', async (req, res) => {
